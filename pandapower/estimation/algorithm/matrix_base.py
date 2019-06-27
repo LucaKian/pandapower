@@ -100,11 +100,11 @@ class BaseAlgebra:
         f_bus, t_bus = self.fb, self.tb
         V = vm * np.exp(1j * delta)
 
-        dSbus_dth, dSbus_dv = self._dSbus_dv(V)
-        dSf_dth, dSf_dv, dSt_dth, dSt_dv = self._dSbr_dv(V)
-        dIf_dth, dIf_dv, dIt_dth, dIt_dv = self._dIbr_dv(V)
-        dvm_dth, dvm_dv = self._dvmbus_dv(V)
-        dva_dth, dva_dv = self._dvabus_dv(V)
+        dSbus_dth, dSbus_dv = self._dSbus_dV(V)
+        dSf_dth, dSf_dv, dSt_dth, dSt_dv = self._dSbr_dV(V)
+        dIf_dth, dIf_dv, dIt_dth, dIt_dv = (matrix.toarray() for matrix in self._dIbr_dV(V))
+        dvm_dth, dvm_dv = self._dvmbus_dV(V)
+        dva_dth, dva_dv = self._dvabus_dV(V)
 
         s_jac_th = vstack((dSbus_dth.real,
                                dSf_dth.real,
@@ -124,22 +124,27 @@ class BaseAlgebra:
         vm_jac = np.c_[dvm_dth, dvm_dv]
         va_jac = np.c_[dva_dth, dva_dv]
 
-        i_jac_th = np.c_(dIf_dth.abs,
-                             dIt_dth.abs,
-                             dIf_dth.angle,
-                             dIt_dth.angle)
+        im_jac_th = np.r_[np.abs(dIf_dth),
+                         np.abs(dIt_dth),]
 
-        i_jac_v = np.c_(dIf_dv.abs,
-                            dIt_dv.abs,
-                            dIf_dv.angle,
-                            dIt_dv.angle)
+        im_jac_v = np.r_[np.abs(dIf_dv),
+                        np.abs(dIt_dv)]
 
-        i_jac = np.r_[(i_jac_th, i_jac_v).toarray()] * \
+        ia_jac_th = np.r_[np.angle(dIf_dth),
+                          np.angle(dIt_dth)]
+
+        ia_jac_v = np.r_[np.angle(dIf_dv),
+                         np.angle(dIt_dv)]
+
+        im_jac = np.c_[im_jac_th, im_jac_v] * \
                     (self.baseMVA / np.r_[self.bus_baseKV[f_bus],
                                           self.bus_baseKV[t_bus]]).reshape(-1, 1)
 
+        ia_jac = np.c_[ia_jac_th, ia_jac_v]
+
         return np.r_[s_jac,
-                     i_jac,
+                     im_jac,
+                     ia_jac,
                      vm_jac,
                      va_jac,
                    ][self.non_nan_meas_mask, :][:, self.delta_v_bus_mask]
@@ -157,10 +162,10 @@ class BaseAlgebra:
         return dvm_dth, dvm_dv
 
     def _dvabus_dV(self, V):
-        dva_dth, dva_dv = np.zeros((V.shape[0], V.shape[0])), np.eye(V.shape[0], V.shape[0])
+        dva_dth, dva_dv = np.eye(V.shape[0], V.shape[0]), np.zeros((V.shape[0], V.shape[0]))
         return dva_dth, dva_dv
 
-    def dIbr_dV(self, V):
+    def _dIbr_dV(self, V):
         dIf_dth, dIf_dv, dIt_th, dIt_dv, _, _ = dIbr_dV(self.eppci.branch, self.Yf, self.Yt, V)
         return dIf_dth, dIf_dv, dIt_th, dIt_dv
 
