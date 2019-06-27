@@ -67,77 +67,107 @@ class BaseAlgebra:
         return (self.z - hx).ravel()
 
     def create_hx(self, E):
-        v, delta = self._e2v(E)
+        vm, delta = self._e2v(E)
         f_bus, t_bus = self.fb, self.tb
-        V = v * np.exp(1j * delta)
-        Sfe = V[f_bus] * np.conj(self.Yf * V) 
+        V = vm * np.exp(1j * delta)
+        va = np.angle(V)
+        Sfe = V[f_bus] * np.conj(self.Yf * V)
         Ste = V[t_bus] * np.conj(self.Yt * V)
-        Sbuse = V * np.conj(self.Ybus * V) 
-        Ife = np.abs(Sfe)/v[f_bus]
-        Ite = np.abs(Ste)/v[t_bus]
+        Sbuse = V * np.conj(self.Ybus * V)
+        Ife = self.Yf * V
+        ifem = np.abs(Ife)
+        ifea = np.angle(Ife)
+        Ite = self.Yt * V
+        item = np.abs(Ite)
+        itea = np.angle(Ite)
         hx = np.r_[np.real(Sbuse) * self.baseMVA,
                    np.real(Sfe) * self.baseMVA,
                    np.real(Ste) * self.baseMVA,
                    np.imag(Sbuse) * self.baseMVA,
                    np.imag(Sfe) * self.baseMVA,
                    np.imag(Ste) * self.baseMVA,
-                   v,
-                   Ife * self.baseMVA / self.bus_baseKV[f_bus],
-                   Ite * self.baseMVA / self.bus_baseKV[t_bus]] 
+                   vm,
+                   va,
+                   ifem * self.baseMVA / self.bus_baseKV[f_bus],
+                   item * self.baseMVA / self.bus_baseKV[t_bus],
+                   ifea,
+                   itea]
         return hx[self.non_nan_meas_mask]
 
     def create_hx_jacobian(self, E):
         # Using sparse matrix in creation sub-jacobian matrix
-        v, delta = self._e2v(E)
-
+        vm, delta = self._e2v(E)
         f_bus, t_bus = self.fb, self.tb
-        V = v * np.exp(1j * delta)
+        V = vm * np.exp(1j * delta)
 
-        dSbus_dth, dSbus_dv = self._dSbus_dv(V)
-        dSf_dth, dSf_dv, dSt_dth, dSt_dv = self._dSbr_dv(V)
-        dif_dth, dif_dv, dit_dth, dit_dv = self._dibr_dv(V)
-        dv_dth, dv_dv = self._dVbus_dv(V)
+        dSbus_dth, dSbus_dv = self._dSbus_dV(V)
+        dSf_dth, dSf_dv, dSt_dth, dSt_dv = self._dSbr_dV(V)
+        dIf_dth, dIf_dv, dIt_dth, dIt_dv = (matrix.toarray() for matrix in self._dIbr_dV(V))
+        dvm_dth, dvm_dv = self._dvmbus_dV(V)
+        dva_dth, dva_dv = self._dvabus_dV(V)
 
         s_jac_th = vstack((dSbus_dth.real,
-                           dSf_dth.real,
-                           dSt_dth.real,
-                           dSbus_dth.imag,
-                           dSf_dth.imag,
-                           dSt_dth.imag))
+                               dSf_dth.real,
+                               dSt_dth.real,
+                               dSbus_dth.imag,
+                               dSf_dth.imag,
+                               dSt_dth.imag))
         s_jac_v = vstack((dSbus_dv.real,
-                          dSf_dv.real,
-                          dSt_dv.real,
-                          dSbus_dv.imag,
-                          dSf_dv.imag,
-                          dSt_dv.imag))
+                              dSf_dv.real,
+                              dSt_dv.real,
+                              dSbus_dv.imag,
+                              dSf_dv.imag,
+                              dSt_dv.imag))
 
         s_jac = hstack((s_jac_th, s_jac_v)).toarray() * self.baseMVA
-        v_jac = np.c_[dv_dth, dv_dv]
-        i_jac = vstack((hstack((dif_dth, dif_dv)),
-                        hstack((dit_dth, dit_dv)))).toarray() *\
-                        (self.baseMVA / np.r_[self.bus_baseKV[f_bus], 
-                                              self.bus_baseKV[t_bus]]).reshape(-1, 1)
-        return np.r_[s_jac,
-                     v_jac,
-                     i_jac][self.non_nan_meas_mask, :][:, self.delta_v_bus_mask]
 
-    def _dSbus_dv(self, V):
+        vm_jac = np.c_[dvm_dth, dvm_dv]
+        va_jac = np.c_[dva_dth, dva_dv]
+
+        im_jac_th = np.r_[np.abs(dIf_dth),
+                         np.abs(dIt_dth),]
+
+        im_jac_v = np.r_[np.abs(dIf_dv),
+                        np.abs(dIt_dv)]
+
+        ia_jac_th = np.r_[np.angle(dIf_dth),
+                          np.angle(dIt_dth)]
+
+        ia_jac_v = np.r_[np.angle(dIf_dv),
+                         np.angle(dIt_dv)]
+
+        im_jac = np.c_[im_jac_th, im_jac_v] * \
+                    (self.baseMVA / np.r_[self.bus_baseKV[f_bus],
+                                          self.bus_baseKV[t_bus]]).reshape(-1, 1)
+
+        ia_jac = np.c_[ia_jac_th, ia_jac_v]
+
+        return np.r_[s_jac,
+                     vm_jac,
+                     va_jac,
+                     im_jac,
+                     ia_jac,
+                   ][self.non_nan_meas_mask, :][:, self.delta_v_bus_mask]
+
+    def _dSbus_dV(self, V):
         dSbus_dv, dSbus_dth = dSbus_dV(self.Ybus, V)
         return dSbus_dth, dSbus_dv
 
-    def _dSbr_dv(self, V):
+    def _dSbr_dV(self, V):
         dSf_dth, dSf_dv, dSt_dth, dSt_dv, _, _ = dSbr_dV(self.eppci.branch, self.Yf, self.Yt, V)
         return dSf_dth, dSf_dv, dSt_dth, dSt_dv
 
-    def _dVbus_dv(self, V):
-        dv_dth, dv_dv = np.zeros((V.shape[0], V.shape[0])), np.eye(V.shape[0], V.shape[0])
-        return dv_dth, dv_dv
+    def _dvmbus_dV(self, V):
+        dvm_dth, dvm_dv = np.zeros((V.shape[0], V.shape[0])), np.eye(V.shape[0], V.shape[0])
+        return dvm_dth, dvm_dv
 
-    def _dibr_dv(self, V):
-        # for current we only interest in the magnitude at the moment
-        dif_dth, dif_dv, dit_dth, dit_dv, _, _ = map(np.abs, dIbr_dV(self.eppci.branch, self.Yf, self.Yt, V))
-        return dif_dth, dif_dv, dit_dth, dit_dv
+    def _dvabus_dV(self, V):
+        dva_dth, dva_dv = np.eye(V.shape[0], V.shape[0]), np.zeros((V.shape[0], V.shape[0]))
+        return dva_dth, dva_dv
 
+    def _dIbr_dV(self, V):
+        dIf_dth, dIf_dv, dIt_th, dIt_dv, _, _ = dIbr_dV(self.eppci.branch, self.Yf, self.Yt, V)
+        return dIf_dth, dIf_dv, dIt_th, dIt_dv
 
 class BaseAlgebraZeroInjConstraints(BaseAlgebra):
     def create_cx(self, E, p_zero_inj, q_zero_inj):
@@ -157,4 +187,4 @@ class BaseAlgebraZeroInjConstraints(BaseAlgebra):
         c_jac_v = np.r_[dSbus_dv.toarray().real[p_zero_inj],
                         dSbus_dv.toarray().imag[q_zero_inj]]
         c_jac = np.c_[c_jac_th, c_jac_v]
-        return c_jac[:, self.delta_v_bus_mask]  
+        return c_jac[:, self.delta_v_bus_mask]
