@@ -87,9 +87,9 @@ class BaseAlgebra:
                    np.imag(Sfe) * self.baseMVA,
                    np.imag(Ste) * self.baseMVA,
                    vm,
+                   va,
                    ifem * self.baseMVA / self.bus_baseKV[f_bus],
                    item * self.baseMVA / self.bus_baseKV[t_bus],
-                   va,
                    ifea,
                    itea]
         return hx[self.non_nan_meas_mask]
@@ -143,10 +143,10 @@ class BaseAlgebra:
         ia_jac = np.c_[ia_jac_th, ia_jac_v]
 
         return np.r_[s_jac,
-                     im_jac,
-                     ia_jac,
                      vm_jac,
                      va_jac,
+                     im_jac,
+                     ia_jac,
                    ][self.non_nan_meas_mask, :][:, self.delta_v_bus_mask]
 
     def _dSbus_dV(self, V):
