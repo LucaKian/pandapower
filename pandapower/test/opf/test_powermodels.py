@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 import pandapower as pp
+import pandapower.networks as nw
 from pandapower.test.consistency_checks import consistency_checks
 from pandapower.test.toolbox import add_grid_connection, create_test_line
 
@@ -266,18 +267,20 @@ def test_voltage_angles():
     pp.create_load(net, b3, p_mw=5, controllable=False)
     load_id = pp.create_load(net, b4, p_mw=5, controllable=True, max_p_mw=50, min_p_mw=0, min_q_mvar=-1e6,
                              max_q_mvar=1e6)
+    pp.create_poly_cost(net, 0, "ext_grid", cp1_eur_per_mw=1)
     pp.create_poly_cost(net, load_id, "load", cp1_eur_per_mw=-1000)
     net.trafo3w.shift_lv_degree.at[tidx] = 120
     net.trafo3w.shift_mv_degree.at[tidx] = 80
 
     custom_file = os.path.join(os.path.abspath(os.path.dirname(pp.test.__file__)),
                                "test_files", "run_powermodels_custom.jl")
-    # TODO: pp.runpm_dc gives does not seem to consider the voltage angles. Is this intended behaviour?
+    # TODO: pp.runpm_dc does not consider the voltage angles shift of the transformer - only
+    # the loadflow voltage angles. Is this intended behaviour?
     for run in [pp.runpm_ac_opf, partial(pp.runpm, julia_file=custom_file)]:
         run(net)
         consistency_checks(net)
         assert 119.9 < net.res_trafo3w.loading_percent.at[tidx] <= 120
-        assert 85 < (net.res_bus.va_degree.at[b1] - net.res_bus.va_degree.at[b3]) % 360 < 86
+        assert 85 < (net.res_bus.va_degree.at[b1] - net.res_bus.va_degree.at[b3]) % 360 < 90
         assert 120 < (net.res_bus.va_degree.at[b1] - net.res_bus.va_degree.at[b4]) % 360 < 130
         assert np.isnan(net.res_bus.va_degree.at[b5])
 
@@ -378,5 +381,32 @@ def test_pm_tnep():
     assert not np.any(net["res_line"].loc[:, "loading_percent"] > net["line"].loc[:, "max_loading_percent"])
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(julia_installed == False, reason="requires julia installation")
+def test_storage_opt():
+    net = nw.case5()
+    pp.create_storage(net, 2, p_mw=1., max_e_mwh=.2, soc_percent=100., q_mvar=1.)
+    pp.create_storage(net, 3, p_mw=1., max_e_mwh=.3, soc_percent=100., q_mvar=1.)
+
+    # optimize for 24 time steps. At the end the SOC is 100%
+    storage_results = pp.runpm_storage_opf(net, n_timesteps=24)
+    assert np.allclose(storage_results[0].loc[22, "soc_mwh"], 0.004960, rtol=1e-4, atol=1e-4)
+    assert np.allclose(storage_results[0].loc[23, "soc_mwh"], 0.)
+    assert np.allclose(storage_results[1].loc[22, "soc_percent"], 29.998074, rtol=1e-4, atol=1e-4)
+    assert np.allclose(storage_results[1].loc[23, "soc_mwh"], 0.)
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(julia_installed == False, reason="requires julia installation")
+def test_ost_opt():
+    net = nw.case5()
+    branch_status = net["line"].loc[:, "in_service"].values
+    assert np.array_equal(np.array([1, 1, 1, 1, 1, 1]).astype(bool), branch_status.astype(bool))
+    pp.runpm_ots(net)
+    branch_status = net["res_line"].loc[:, "in_service"].values
+    assert np.array_equal(np.array([1, 1, 1, 1, 0, 1]).astype(bool), branch_status.astype(bool))
+
+
 if __name__ == '__main__':
-    pytest.main([__file__])
+    # pytest.main([__file__])
+    test_storage_opt()
